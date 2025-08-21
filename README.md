@@ -6,9 +6,11 @@
 ### 进入stream-gamma文件夹，并安装requirements。
 ### 下载权重和数据集：https://pan.baidu.com/s/1ZOIi6A--PMdy_BzSJIgNVA?pwd=ui48 提取码: ui48 
 
+---
+
 
 ## 参考了以下项目：
-"""
+```
 https://github.com/RealMarco/GlaucomaRecognition
 
 @misc{liu2021grm,
@@ -19,4 +21,4 @@ https://github.com/RealMarco/GlaucomaRecognition
   journal = {GitHub Repository},
   howpublished = {\url{https://github.com/RealMarco/GlaucomaRecognition}}
 }
-"""
+```
