@@ -10,8 +10,8 @@
 
 ## 2. 运行程序
 ### 进入stream-gamma文件夹，执行命令：
-‘‘‘
-bash streamlit run Home.py
+‘‘‘bash 
+streamlit run Home.py
 
 ’’’
 
