@@ -132,6 +132,56 @@ def sens_spec_dice(TP,FP,FN,TN,eps=1e-8):
     sens=TP/(TP+FN+eps); spec=TN/(TN+FP+eps); dice=(2*TP)/(2*TP+FP+FN+eps)
     return sens,spec,dice
 
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+
+def calculate_sensitivity_specificity(ground_truth, test_image):
+    """
+    计算两个二值图像之间的敏感性和特异性
+    
+    参数:
+    ground_truth: 参考图像（金标准），二值numpy数组，1表示正类，0表示负类
+    test_image: 待评估图像，二值numpy数组，1表示预测正类，0表示预测负类
+    
+    返回:
+    sensitivity: 敏感性（召回率）
+    specificity: 特异性
+    tp: 真阳性数量
+    tn: 真阴性数量
+    fp: 假阳性数量
+    fn: 假阴性数量
+    """
+    # 确保输入是二值图像
+    if not np.array_equal(ground_truth, ground_truth.astype(bool)):
+        raise ValueError("参考图像必须是二值图像（仅包含0和1）")
+    if not np.array_equal(test_image, test_image.astype(bool)):
+        raise ValueError("待评估图像必须是二值图像（仅包含0和1）")
+    
+    # 确保两个图像尺寸相同
+    if ground_truth.shape != test_image.shape:
+        raise ValueError("参考图像和待评估图像必须具有相同的尺寸")
+    
+    # 计算TP, TN, FP, FN
+    tp = np.sum((ground_truth == 1) & (test_image == 1))  # 真阳性
+    tn = np.sum((ground_truth == 0) & (test_image == 0))  # 真阴性
+    fp = np.sum((ground_truth == 0) & (test_image == 1))  # 假阳性
+    fn = np.sum((ground_truth == 1) & (test_image == 0))  # 假阴性
+    
+    # 计算敏感性 (避免除以零)
+    if tp + fn == 0:
+        sensitivity = 0.0
+    else:
+        sensitivity = tp / (tp + fn)
+    
+    # 计算特异性 (避免除以零)
+    if tn + fp == 0:
+        specificity = 0.0
+    else:
+        specificity = tn / (tn + fp)
+    
+    return sensitivity, specificity, tp, tn, fp, fn
+
 # ========= 单张推理 =========
 @torch.no_grad()
 def infer_single(image_path: str, weights_path: str, save_png_path: str, device: Optional[str]=None):
@@ -163,7 +213,7 @@ def infer_single(image_path: str, weights_path: str, save_png_path: str, device:
     os.makedirs(os.path.dirname(save_png_path) or ".", exist_ok=True)
     cv2.imwrite(save_png_path, pred_png, [cv2.IMWRITE_PNG_COMPRESSION, 9])
     print(f"[Saved] {save_png_path}")
-    return pred_idx, pred_png
+    return pred_idx, pred_png, save_png_path
 def largest_component(bin_mask: np.ndarray) -> np.ndarray:
     """只保留最大连通域，去除小噪点"""
     bin_mask = (bin_mask > 0).astype(np.uint8)
@@ -253,23 +303,53 @@ def compute_cdr_from_multiclass_mask(mask: np.ndarray, method: str = "ellipse") 
         "method": method
     }
 
-def eval_single(gt_path: str, pred_idx: np.ndarray, classes=(0,1,2)):
-    gt = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
-    if gt is None:
-        raise FileNotFoundError(gt_path)
-    gt_c = to_class_index(gt)
-    if gt_c.shape != pred_idx.shape:
-        pred_idx = cv2.resize(pred_idx, (gt_c.shape[1], gt_c.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+def confusion_per_class(gt, pred, c):
+    TP = np.sum((gt == c) & (pred == c))
+    TN = np.sum((gt != c) & (pred != c))
+    FP = np.sum((gt != c) & (pred == c))
+    FN = np.sum((gt == c) & (pred != c))
+    return TP, TN, FP, FN
+
+def eval_single(gt_path: str, pred_path: str, classes=(0,128,255)):
+    gt = np.array(Image.open(gt_path).convert("L"))
+    pred = np.array(Image.open(pred_path).convert("L"))
+
+    for c in classes:
+        TP = np.sum((gt == c) & (pred == c))
+        TN = np.sum((gt != c) & (pred != c))
+        FP = np.sum((gt != c) & (pred == c))
+        FN = np.sum((gt == c) & (pred != c))
+
+        sensitivity = TP / (TP + FN + 1e-8)
+        specificity = TN / (TN + FP + 1e-8)
 
     rows=[]
     for c in classes:
-        TP,FP,FN,TN = confusion_binary(gt_c, pred_idx, positive_cls=c)
+        TP,FP,FN,TN = confusion_binary(gt, pred, positive_cls=c)
         s,p,d = sens_spec_dice(TP,FP,FN,TN)
-        rows.append((c,s,p,d))
+        TP = np.sum((gt == c) & (pred == c))
+        TN = np.sum((gt != c) & (pred != c))
+        FP = np.sum((gt != c) & (pred == c))
+        FN = np.sum((gt == c) & (pred != c))
+        gt_has_c = np.sum(gt == c)
+        print(f"真实标签中类别 {c} 的数量：{gt_has_c}")
+
+        # 检查2：预测结果中是否存在该类别
+        pred_has_c = np.sum(pred == c)
+        print(f"预测结果中类别 {c} 的数量：{pred_has_c}")
+
+        # 检查3：计算TP, FN的具体值
+        TP, FP, FN, TN = confusion_binary(gt, pred, positive_cls=c)
+        print(f"类别 {c} 的TP={TP}, FN={FN}")
+
+        rows.append((c,sensitivity,specificity,d))
 
 
-    pred_res = compute_cdr_from_multiclass_mask(pred_idx, method="ellipse")  # 或 "bbox"
-    gt_res = compute_cdr_from_multiclass_mask(gt_c, method="ellipse")  # 或 "bbox"
+
+
+    pred_res = compute_cdr_from_multiclass_mask(pred, method="ellipse")  # 或 "bbox"
+    gt_res = compute_cdr_from_multiclass_mask(gt, method="ellipse")  # 或 "bbox"
     VCDR = calculate_diff_percentage(pred_res['VCDR'],gt_res['VCDR'])
     HCDR = calculate_diff_percentage(pred_res['HCDR'],gt_res['HCDR'])
     results_VCDR = (VCDR+HCDR)/2
@@ -310,7 +390,7 @@ def predict(img_name, st):
     ap.add_argument("--weights", type=str, default="/home/yanggq/project/grading/GlaucomaRecognition-main/CodeOfTask3/test3_torch_project/trained_models_torch/best_model_0.9208/model.pt", help="模型权重 .pt")
     ap.add_argument("--save",    type=str, default="/home/yanggq/project/grading/GlaucomaRecognition-main/CodeOfTask3/test3_torch_project/result.png", help="输出 PNG（0/128/255）")
     ap.add_argument("--image_dir",      type=str, default="/home/yanggq/project/grading/Glaucoma_grading/training/multi-modality_images", help="可选：GT PNG（0/1/2 或 0/128/255），则计算指标")    
-    ap.add_argument("--gt_dir",      type=str, default="/home/yanggq/project/grading/task3_disc_cup_segmentation/training/Disc_Cup_Mask", help="可选：GT PNG（0/1/2 或 0/128/255），则计算指标")
+    ap.add_argument("--gt_dir",      type=str, default="/home/yanggq/project/grading/GlaucomaRecognition-main/stream-gamma/pages/funds/result/GT", help="可选：GT PNG（0/1/2 或 0/128/255），则计算指标")
     args, _ = ap.parse_known_args()
 
     img_path = args.image_dir + '/' + os.path.splitext(img_name)[0] + '/' + img_name
@@ -318,7 +398,7 @@ def predict(img_name, st):
     print(args.weights)
     print(args.save)
 
-    pred_idx, mask = infer_single(img_path, args.weights, args.save)
+    pred_idx, mask, save_png_path = infer_single(img_path, args.weights, args.save)
 
     if args.gt_dir:
         gt_path = find_matching_gt(img_path, args.gt_dir)
@@ -328,7 +408,7 @@ def predict(img_name, st):
         if (gt_path is None) and hasattr(args, "gt") and args.gt:
             gt_path = args.gt if os.path.exists(args.gt) else None
 
-        rows, macro = eval_single(gt_path, pred_idx)
+        rows, macro = eval_single(gt_path, save_png_path)
         print("Per-class:")
         for c,s,p,d in rows:
             print(f"  class {c}: Sens={s:.4f}  Spec={p:.4f}  Dice={d:.4f}")
@@ -336,4 +416,3 @@ def predict(img_name, st):
 
     
     return mask, macro
-
