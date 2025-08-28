@@ -332,7 +332,7 @@ def eval_to_bmp(weights_path, test_path='val_data/multi-modality_images', gt_dir
         cv2.imwrite(os.path.join(out_dir, "Pred", f"{idx}.png"), pred)
         cv2.imwrite(os.path.join(out_dir, "GT", f"{idx}.png"), mask)
 
-    per_image_df, micro, metrics  = eval_dir(os.path.join(out_dir, "GT"), os.path.join(out_dir, "Pred"), classes=(0,1,2), save_per_image_csv="per_image_metrics.csv")
+    per_image_df, micro, metrics  = eval_dir(os.path.join(out_dir, "GT"), os.path.join(out_dir, "Pred"), classes=(0,128,255), save_per_image_csv="per_image_metrics.csv")
     return per_image_df, micro, metrics
     	
 import cv2
@@ -534,22 +534,16 @@ def eval_dir(
     for c in classes:
         TP, FP, FN, TN = agg[c]["TP"], agg[c]["FP"], agg[c]["FN"], agg[c]["TN"]
         s, p, d = sens_spec_dice(TP, FP, FN, TN)
-        micro[c] = {"sensitivity": float(s), "specificity": float(p), "dice": float(d)}
-    macro_sens = float(np.mean([micro[c]["sensitivity"] for c in classes]))
-    macro_spec = float(np.mean([micro[c]["specificity"] for c in classes]))
+        micro[c] = {"dice": float(d)}
     macro_dice = float(np.mean([micro[c]["dice"]        for c in classes]))
-
-    print(micro)
-
-    print("=== Per-class (micro over pixels) ===")
     for c in classes:
-        print(f"Class {c}: Sens={micro[c]['sensitivity']:.4f}  Spec={micro[c]['specificity']:.4f}  Dice={micro[c]['dice']:.4f}")
-    print("\n=== Overall (macro over classes) ===")
-    print(f"Macro Sensitivity: {macro_sens:.4f}")
-    print(f"Macro Specificity: {macro_spec:.4f}")
-    print(f"Macro Dice:        {macro_dice:.4f}")
+        TP = np.sum((gt == c) & (pred == c))
+        TN = np.sum((gt != c) & (pred != c))
+        FP = np.sum((gt != c) & (pred == c))
+        FN = np.sum((gt == c) & (pred != c))
 
-
+        sensitivity = TP / (TP + FN + 1e-8)
+        specificity = TN / (TN + FP + 1e-8)
 
 
     results_VCDR = []
@@ -575,17 +569,12 @@ def eval_dir(
         cdr_ratio = calculate_diff_percentage(pred_res['area_ratio'],gt_res['area_ratio'])
         
         
-        print("=============")
-        print("name",name)
-        print("VCDR",VCDR)
-        print("HCDR",HCDR)
-        
         results_VCDR.append((VCDR+HCDR)/2)
 
     print("VCDR",np.mean(results_VCDR))
 
-    return per_image_df, micro, {"macro_sensitivity": macro_sens,
-                                 "macro_specificity": macro_spec,
+    return per_image_df, micro, {"macro_sensitivity": sensitivity,
+                                 "macro_specificity": specificity,
                                  "macro_dice": macro_dice,
                                  "macro_cdr": np.mean(results_VCDR)}
 
